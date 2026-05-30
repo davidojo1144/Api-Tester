@@ -7,7 +7,21 @@ import KVPairEditor from './components/KVPairEditor'
 import Tabs from './components/Tabs'
 import ResponseViewer from './components/ResponseViewer'
 import HistoryList from './components/HistoryList'
-import { loadHistory, saveHistory, loadConfig, saveConfig } from './utils/helpers'
+import CollectionsList from './components/CollectionsList'
+
+// Modals
+import EnvironmentModal from './components/EnvironmentModal'
+import SaveRequestModal from './components/SaveRequestModal'
+import ImportCurlModal from './components/ImportCurlModal'
+
+import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts'
+import { 
+  loadHistory, saveHistory, 
+  loadConfig, saveConfig,
+  loadCollections, saveCollections,
+  loadEnvironments, saveEnvironments,
+  replaceVariables, exportAllData, importData
+} from './utils/helpers'
 
 const REQUEST_TABS = [
   { id: 'params', label: 'Query Params' },
@@ -15,13 +29,24 @@ const REQUEST_TABS = [
   { id: 'body', label: 'Body' },
 ]
 
+const SIDEBAR_TABS = [
+  { id: 'history', label: 'History' },
+  { id: 'collections', label: 'Collections' },
+]
+
 // Load persisted state once on module init
 const persistedConfig = loadConfig()
 
 export default function App() {
+  // Modals state
+  const [isEnvModalOpen, setIsEnvModalOpen] = useState(false)
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false)
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false)
+
   // Environment
   const [currentEnv, setCurrentEnv] = useState(persistedConfig?.currentEnv || 'dev')
   const envUrls = useRef(persistedConfig?.envUrls || { dev: '', prod: '' })
+  const [environments, setEnvironments] = useState(() => loadEnvironments())
 
   // Request config
   const [baseUrl, setBaseUrl] = useState(persistedConfig?.baseUrl || '')
@@ -40,14 +65,21 @@ export default function App() {
   const [response, setResponse] = useState(persistedConfig?.lastResponse || null)
   const [loading, setLoading] = useState(false)
 
-  // History (with full response data)
+  // History & Collections
+  const [activeSidebarTab, setActiveSidebarTab] = useState('history')
   const [history, setHistory] = useState(() => {
     const loaded = loadHistory()
     return Array.isArray(loaded) ? loaded : []
   })
-
-  // Active history index (to highlight the selected item)
+  const [collections, setCollections] = useState(() => loadCollections())
   const [activeHistoryIndex, setActiveHistoryIndex] = useState(null)
+
+  // ── Keyboard Shortcuts ──
+  useKeyboardShortcuts({
+    onSend: () => !loading && sendRequest(),
+    onSave: () => setIsSaveModalOpen(true),
+    onFocusUrl: () => document.getElementById('endpoint')?.focus()
+  })
 
   // ── Persist config on every change ──
   useEffect(() => {
@@ -72,7 +104,12 @@ export default function App() {
     setBaseUrl(envUrls.current[env] || '')
   }, [currentEnv, baseUrl])
 
-  // Add to history (now includes full response data)
+  const handleSaveEnvironments = (newEnvs) => {
+    setEnvironments(newEnvs)
+    saveEnvironments(newEnvs)
+  }
+
+  // Add to history
   const addToHistory = useCallback((method, url, status, time, responseData) => {
     setHistory((prev) => {
       const next = [{ method, url, status, time, ts: Date.now(), response: responseData }, ...prev].slice(0, 30)
@@ -82,34 +119,28 @@ export default function App() {
     setActiveHistoryIndex(null)
   }, [])
 
-  // Clear history
   const clearHistory = useCallback(() => {
     setHistory([])
     saveHistory([])
     setActiveHistoryIndex(null)
   }, [])
 
-  // Load from history — now also restores the response
-  const loadFromHistory = useCallback((index) => {
-    const item = history[index]
+  // Load from history or collections
+  const loadSavedRequest = useCallback((item, index = null) => {
     if (!item) return
+    
+    // For history, it might have response data
+    if (item.response) setResponse(item.response)
+    else setResponse(null)
 
-    // Restore the response body
-    if (item.response) {
-      setResponse(item.response)
-    }
-
-    // Highlight the selected history item
     setActiveHistoryIndex(index)
 
-    // Restore URL and method
     try {
       const urlObj = new URL(item.url)
       setBaseUrl(urlObj.origin)
       setEndpoint(urlObj.pathname)
       setMethod(item.method)
 
-      // Restore query params
       const newParams = []
       urlObj.searchParams.forEach((v, k) => {
         newParams.push({ key: k, value: v, id: Date.now() + Math.random() })
@@ -117,30 +148,85 @@ export default function App() {
       setParams(newParams)
     } catch {
       setEndpoint(item.url)
+      setMethod(item.method)
     }
-  }, [history])
+
+    if (item.headers) setHeaders(item.headers)
+    if (item.body) setRequestBody(item.body)
+    if (item.token) setAccessToken(item.token)
+
+  }, [])
+
+  // Collections
+  const handleSaveCollection = (name, collectionFolder) => {
+    const newReq = {
+      id: Date.now(),
+      name,
+      collection: collectionFolder,
+      method,
+      url: baseUrl.replace(/\/+$/, '') + endpoint,
+      headers,
+      body: requestBody,
+      token: accessToken
+    }
+    const next = [...collections, newReq]
+    setCollections(next)
+    saveCollections(next)
+  }
+
+  const handleDeleteCollection = (id) => {
+    const next = collections.filter(c => c.id !== id)
+    setCollections(next)
+    saveCollections(next)
+  }
+
+  // Import/Export
+  const handleImportData = () => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'application/json'
+    input.onchange = e => {
+      const file = e.target.files[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = (event) => {
+        if (importData(event.target.result)) {
+          window.location.reload() // Reload to apply all state
+        } else {
+          alert('Failed to import backup. Invalid format.')
+        }
+      }
+      reader.readAsText(file)
+    }
+    input.click()
+  }
 
   // Send request
   const sendRequest = useCallback(async () => {
     const trimmedBase = baseUrl.replace(/\/+$/, '')
     if (!trimmedBase && !endpoint) return
 
-    // Build URL
-    let url = trimmedBase + endpoint
+    const envVars = environments[currentEnv] || []
+
+    // Build URL and Replace Variables
+    let rawUrl = trimmedBase + endpoint
     const kvParams = params.filter((p) => p.key.trim())
     if (kvParams.length > 0) {
       const searchParams = new URLSearchParams()
-      kvParams.forEach((p) => searchParams.append(p.key, p.value))
-      url += '?' + searchParams.toString()
+      kvParams.forEach((p) => searchParams.append(replaceVariables(p.key, envVars), replaceVariables(p.value, envVars)))
+      rawUrl += '?' + searchParams.toString()
     }
+    const url = replaceVariables(rawUrl, envVars)
 
     // Build headers
     const reqHeaders = {}
     headers.filter((h) => h.key.trim()).forEach((h) => {
-      reqHeaders[h.key] = h.value
+      reqHeaders[replaceVariables(h.key, envVars)] = replaceVariables(h.value, envVars)
     })
-    const token = accessToken.trim()
-    if (token) {
+    
+    const rawToken = accessToken.trim()
+    if (rawToken) {
+      const token = replaceVariables(rawToken, envVars)
       reqHeaders['Authorization'] = token.startsWith('Bearer ') ? token : `Bearer ${token}`
     }
 
@@ -148,7 +234,7 @@ export default function App() {
     let body = undefined
     if (['POST', 'PUT', 'PATCH'].includes(method) && requestBody.trim()) {
       reqHeaders['Content-Type'] = reqHeaders['Content-Type'] || 'application/json'
-      body = requestBody.trim()
+      body = replaceVariables(requestBody.trim(), envVars)
     }
 
     setLoading(true)
@@ -160,17 +246,24 @@ export default function App() {
       const elapsed = Math.round(performance.now() - startTime)
       const contentType = res.headers.get('content-type') || ''
       const isJson = contentType.includes('application/json')
+      const isHtml = contentType.includes('text/html')
+      const isImage = contentType.startsWith('image/')
 
       let data
       let displayText
+      let blobUrl = null
+
       if (isJson) {
         data = await res.json()
         displayText = JSON.stringify(data, null, 2)
+      } else if (isImage) {
+        const blob = await res.blob()
+        blobUrl = URL.createObjectURL(blob)
+        displayText = '[Image Data]'
       } else {
         displayText = await res.text()
       }
 
-      // Collect response headers
       const resHeaders = {}
       res.headers.forEach((v, k) => { resHeaders[k] = v })
 
@@ -181,6 +274,9 @@ export default function App() {
         time: elapsed,
         headers: resHeaders,
         isJson,
+        isHtml,
+        isImage,
+        blobUrl
       }
 
       setResponse(responseData)
@@ -193,11 +289,16 @@ export default function App() {
     } finally {
       setLoading(false)
     }
-  }, [baseUrl, endpoint, method, accessToken, params, headers, requestBody, addToHistory])
+  }, [baseUrl, endpoint, method, accessToken, params, headers, requestBody, addToHistory, currentEnv, environments])
 
   return (
     <div className="max-w-[1100px] mx-auto px-6 py-8">
-      <Header />
+      <Header 
+        onOpenEnv={() => setIsEnvModalOpen(true)}
+        onImportCurl={() => setIsImportModalOpen(true)}
+        onExportData={exportAllData}
+        onImportData={handleImportData}
+      />
 
       {/* Configuration */}
       <Card title="Configuration">
@@ -232,7 +333,7 @@ export default function App() {
               type={showToken ? 'text' : 'password'}
               value={accessToken}
               onChange={(e) => setAccessToken(e.target.value)}
-              placeholder="Bearer token or API key"
+              placeholder="Bearer token or {{token}}"
               className="w-full text-[13px] text-text-primary bg-bg-input border border-border rounded-[6px] py-2.5 px-3.5 pr-16 outline-none transition-all duration-200 focus:border-border-focus focus:shadow-[0_0_0_3px_var(--color-accent-glow)] placeholder:text-text-muted"
             />
             <button
@@ -246,7 +347,17 @@ export default function App() {
       </Card>
 
       {/* Request URL */}
-      <Card title="Request">
+      <Card 
+        title="Request"
+        headerRight={
+          <button 
+            onClick={() => setIsSaveModalOpen(true)}
+            className="text-[11px] bg-accent/10 text-accent border border-accent/20 rounded-[6px] py-1.5 px-3 cursor-pointer transition-all duration-200 hover:bg-accent hover:text-white"
+          >
+            Save Request
+          </button>
+        }
+      >
         <UrlBar
           method={method}
           endpoint={endpoint}
@@ -297,46 +408,77 @@ export default function App() {
       </Card>
 
       {/* Send Button */}
-      <button
-        id="sendBtn"
-        onClick={sendRequest}
-        disabled={loading}
-        className="w-full py-3.5 text-sm font-semibold bg-gradient-to-br from-accent to-purple-500 border-none rounded-[10px] text-white cursor-pointer transition-all duration-200 relative overflow-hidden hover:-translate-y-0.5 hover:shadow-[0_6px_24px_var(--color-accent-glow)] active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-y-0 mb-4 flex items-center justify-center gap-2"
-      >
-        {loading && (
-          <span className="w-[18px] h-[18px] border-2 border-white/30 border-t-white rounded-full animate-spin-custom" />
-        )}
-        <span className={loading ? 'opacity-80' : ''}>
-          {loading ? 'Sending...' : 'Send Request'}
-        </span>
-      </button>
+      <div className="flex gap-2 mb-4">
+        <button
+          id="sendBtn"
+          onClick={sendRequest}
+          disabled={loading}
+          className="flex-1 py-3.5 text-sm font-semibold bg-gradient-to-br from-accent to-purple-500 border-none rounded-[10px] text-white cursor-pointer transition-all duration-200 relative overflow-hidden hover:-translate-y-0.5 hover:shadow-[0_6px_24px_var(--color-accent-glow)] active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed disabled:translate-y-0 flex items-center justify-center gap-2"
+        >
+          {loading && <span className="w-[18px] h-[18px] border-2 border-white/30 border-t-white rounded-full animate-spin-custom" />}
+          <span className={loading ? 'opacity-80' : ''}>
+            {loading ? 'Sending...' : 'Send Request'}
+          </span>
+        </button>
+      </div>
 
       {/* Response */}
       <Card title="Response">
         <ResponseViewer response={response} />
       </Card>
 
-      {/* History */}
-      <Card
-        title="History"
-        headerRight={
-          history.length > 0 && (
+      {/* Sidebar (History & Collections) */}
+      <Card>
+        <div className="flex items-center justify-between border-b border-border mb-4">
+          <Tabs tabs={SIDEBAR_TABS} activeTab={activeSidebarTab} onTabChange={setActiveSidebarTab} />
+          {activeSidebarTab === 'history' && history.length > 0 && (
             <button
               onClick={clearHistory}
-              className="text-[11px] bg-transparent border border-border rounded-[6px] text-text-muted py-1.5 px-3 cursor-pointer transition-all duration-200 hover:border-status-error hover:text-status-error"
+              className="text-[11px] bg-transparent border border-border rounded-[6px] text-text-muted py-1.5 px-3 mb-4 cursor-pointer transition-all duration-200 hover:border-status-error hover:text-status-error"
             >
-              Clear
+              Clear History
             </button>
-          )
-        }
-      >
-        <HistoryList
-          history={history}
-          onSelect={loadFromHistory}
-          onClear={clearHistory}
-          activeIndex={activeHistoryIndex}
-        />
+          )}
+        </div>
+
+        {activeSidebarTab === 'history' ? (
+          <HistoryList
+            history={history}
+            onSelect={(idx) => loadSavedRequest(history[idx], idx)}
+            onClear={clearHistory}
+            activeIndex={activeHistoryIndex}
+          />
+        ) : (
+          <CollectionsList 
+            collections={collections}
+            onSelect={loadSavedRequest}
+            onDelete={handleDeleteCollection}
+          />
+        )}
       </Card>
+
+      {/* Modals */}
+      <EnvironmentModal 
+        isOpen={isEnvModalOpen} 
+        onClose={() => setIsEnvModalOpen(false)} 
+        currentEnv={currentEnv}
+        environments={environments}
+        onSave={handleSaveEnvironments}
+      />
+
+      <SaveRequestModal
+        isOpen={isSaveModalOpen}
+        onClose={() => setIsSaveModalOpen(false)}
+        defaultMethod={method}
+        defaultEndpoint={endpoint}
+        onSave={handleSaveCollection}
+      />
+
+      <ImportCurlModal 
+        isOpen={isImportModalOpen}
+        onClose={() => setIsImportModalOpen(false)}
+        onImport={loadSavedRequest}
+      />
     </div>
   )
 }

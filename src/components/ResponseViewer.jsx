@@ -20,7 +20,7 @@ export default function ResponseViewer({ response }) {
     )
   }
 
-  const { status, statusText, body, time, headers, isJson, error } = response
+  const { status, statusText, body, time, headers, isJson, isHtml, isImage, blobUrl, error } = response
 
   if (error) {
     return (
@@ -70,10 +70,25 @@ export default function ResponseViewer({ response }) {
           >
             {copied ? 'Copied!' : 'Copy'}
           </button>
-          <pre
-            className="bg-bg-input border border-border rounded-[6px] p-4 font-mono text-[12.5px] leading-relaxed max-h-[500px] overflow-auto whitespace-pre-wrap break-words"
-            dangerouslySetInnerHTML={{ __html: highlighted }}
-          />
+          {isImage ? (
+            <div className="bg-bg-input border border-border rounded-[6px] p-4 flex justify-center max-h-[500px] overflow-auto">
+              <img src={blobUrl} alt="Response Image" className="max-w-full rounded" />
+            </div>
+          ) : isHtml ? (
+            <div className="bg-bg-input border border-border rounded-[6px] max-h-[500px] overflow-hidden flex flex-col">
+              <iframe 
+                srcDoc={body} 
+                className="w-full flex-1 min-h-[400px] bg-white border-none"
+                title="Response HTML Preview"
+                sandbox="allow-scripts"
+              />
+            </div>
+          ) : (
+            <pre
+              className="bg-bg-input border border-border rounded-[6px] p-4 font-mono text-[12.5px] leading-relaxed max-h-[500px] overflow-auto whitespace-pre-wrap break-words"
+              dangerouslySetInnerHTML={{ __html: highlighted }}
+            />
+          )}
         </div>
       )}
 
