@@ -48,7 +48,7 @@ export function highlightJson(jsonStr) {
 
 // ── 24-hour TTL localStorage helpers ──
 
-const TTL_MS = 24 * 60 * 60 * 1000 // 24 hours
+const TTL_MS = 14 * 24 * 60 * 60 * 1000 // 2 weeks
 
 /**
  * Save data to localStorage with a 24-hour TTL timestamp
