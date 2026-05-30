@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-primary: #0a0a0f;
+  --color-bg-secondary: #12121a;
+  --color-bg-tertiary: #1a1a26;
+  --color-bg-input: #16161f;
+  --color-border: #2a2a3a;
+  --color-border-hover: #3a3a4a;
+  --color-border-focus: #6c5ce7;
+  --color-text-primary: #e8e8f0;
+  --color-text-secondary: #8888a0;
+  --color-text-muted: #55556a;
+  --color-accent: #6c5ce7;
+  --color-accent-glow: rgba(108, 92, 231, 0.3);
+  --color-method-get: #00d68f;
+  --color-method-post: #ffd93d;
+  --color-method-put: #4dabf7;
+  --color-method-patch: #ff922b;
+  --color-method-delete: #ff6b6b;
+  --color-status-success: #00d68f;
+  --color-status-warning: #ffd93d;
+  --color-status-error: #ff6b6b;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-sans: 'Inter', ui-sans-serif, system-ui, sans-serif;
+}
+
+@font-face {
+  font-family: 'Inter';
+  src: url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  min-height: 100vh;
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
+
+/* Animations */
+@keyframes fadeSlide {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+.animate-fade-slide {
+  animation: fadeSlide 0.2s ease;
+}
+.animate-spin-custom {
+  animation: spin 0.6s linear infinite;
+}
+.animate-pulse-dot {
+  animation: pulse-dot 1.5s ease infinite;
+}
+
+/* JSON Syntax Highlighting */
+.json-key { color: #a78bfa; }
+.json-string { color: #6ee7b7; }
+.json-number { color: #fbbf24; }
+.json-boolean { color: #f472b6; }
+.json-null { color: var(--color-text-muted); font-style: italic; }
